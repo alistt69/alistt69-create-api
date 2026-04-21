@@ -40,5 +40,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alistt69/alistt69-create-api.git"
+  },
+  "homepage": "https://github.com/alistt69/alistt69-create-api#readme",
+  "bugs": {
+    "url": "https://github.com/alistt69/alistt69-create-api/issues"
+  },
+  "keywords": ["react", "typescript", "api", "query", "mutation", "rtk-query", "data-fetching"],
   "license": "MIT"
 }
