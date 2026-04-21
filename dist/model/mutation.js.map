@@ -1,0 +1,1 @@
+{"version":3,"file":"mutation.js","sourceRoot":"","sources":["../../src/model/mutation.ts"],"names":[],"mappings":"AAIA,MAAM,UAAU,QAAQ,CAAgB,SAAuC;IAC3E,OAAO;QACH,IAAI,EAAE,UAAU;QAChB,KAAK,EAAE,SAAS,CAAC,KAAK;QACtB,WAAW,EAAE,SAAS,CAAC,WAAW;QAClC,eAAe,EAAE,SAAS,CAAC,eAAe;QAC1C,iBAAiB,EAAE,SAAS,CAAC,iBAAiB;QAC9C,sBAAsB,EAAE,SAAS,CAAC,sBAAsB;KAC3D,CAAC;AACN,CAAC"}
