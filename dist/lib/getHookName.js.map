@@ -1,1 +1,0 @@
-{"version":3,"file":"getHookName.js","sourceRoot":"","sources":["../../src/lib/getHookName.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,eAAe,EAAE,MAAM,sBAAsB,CAAC;AAEvD,MAAM,UAAU,WAAW,CAAkE,GAAM,EAAE,IAAO,EAAE,IAAO;IACjH,OAAO,MAAM,IAAI,GAAG,eAAe,CAAC,GAAG,CAAC,GAAG,eAAe,CAAC,IAAI,CAAC,EAAE,CAAC;AACvE,CAAC"}
