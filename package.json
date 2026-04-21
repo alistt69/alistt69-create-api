@@ -59,5 +59,8 @@
     "rtk-query",
     "data-fetching"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT"
 }
