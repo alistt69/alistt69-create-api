@@ -118,4 +118,4 @@ api.util.setQueryData('getPost', '1', { id: '1', title: 'Local title' });
 
 MIT — free and open for everyone.
 
-_See [License](./LICENSE)._
+_See [LICENSE](./LICENSE)._
