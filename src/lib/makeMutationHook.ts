@@ -1,21 +1,28 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { getQueryKeysByTag, refetchQueriesByEndpoint, refetchQueryByKey } from '../model/queryStore.js';
-import { InferMutationState, MutationTagsResolver } from '../model/types.js';
-import { BaseQueryArgs, BaseQueryFn } from './createApi.js';
+import {
+    getQueryKeysByTag,
+    refetchQueryByKey,
+    refetchQueriesByEndpoint,
+} from '../model/queryStore.js';
+import { BaseQueryFn, InferMutationState, MutationBuilderDefinition } from '../model/types.js';
 
-export function makeMutationHook<R, A, Raw = R>(
-    query: (arg: A) => BaseQueryArgs,
+interface MakeMutationHookProps<R, A, Raw = R> extends Omit<MutationBuilderDefinition<R, A, Raw>, 'type'> {
     baseQuery: BaseQueryFn<Raw>,
-    invalidates?: string[],
-    invalidatesTags?: MutationTagsResolver<R, A>,
-    transformResponse?: (response: Raw, arg: A) => R,
-    transformErrorResponse?: (error: unknown, arg: A) => unknown,
-) {
+}
+
+export function makeMutationHook<R, A, Raw = R>({
+    query,
+    baseQuery,
+    invalidates,
+    invalidatesTags,
+    transformResponse,
+    transformErrorResponse,
+}: MakeMutationHookProps<R, A, Raw>) {
     return function useGeneratedMutation() {
         const initialState: InferMutationState<R> = useMemo(() => ({
             data: undefined,
-            isLoading: false,
             error: undefined,
+            isLoading: false,
         }), []);
 
         const [state, setState] = useState<InferMutationState<R>>(initialState);
@@ -34,9 +41,9 @@ export function makeMutationHook<R, A, Raw = R>(
 
             setState((prevState) => ({
                 ...prevState,
-                isLoading: true,
-                error: undefined,
                 data: undefined,
+                error: undefined,
+                isLoading: true,
             }));
 
             try {
@@ -47,8 +54,8 @@ export function makeMutationHook<R, A, Raw = R>(
                 if (requestIdRef.current === requestId) {
                     setState({
                         data,
-                        isLoading: false,
                         error: undefined,
+                        isLoading: false,
                     });
                 }
 
@@ -91,12 +98,12 @@ export function makeMutationHook<R, A, Raw = R>(
                 }
             }
         }, [
+            query,
             baseQuery,
             invalidates,
             invalidatesTags,
-            query,
-            transformErrorResponse,
             transformResponse,
+            transformErrorResponse,
         ]);
 
         return [trigger, { ...state, reset }] as const;

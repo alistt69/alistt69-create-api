@@ -1,34 +1,38 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useSyncExternalStore } from 'use-sync-external-store/shim';
 import {
-    clearInFlightQuery,
-    clearQueryAbortController,
-    clearQueryRunner,
-    getInFlightQuery,
     initQueryState,
+    setQueryRunner,
+    subscribeToQuery,
     registerQueryKey,
     setInFlightQuery,
-    setQueryAbortController,
-    setQueryRunner,
-    setTagsForQueryKey,
-    subscribeToQuery,
-    unregisterQueryKey,
+    clearQueryRunner,
+    getInFlightQuery,
     updateQueryState,
+    setTagsForQueryKey,
+    unregisterQueryKey,
+    clearInFlightQuery,
+    setQueryAbortController,
+    clearQueryAbortController,
 } from '../model/queryStore.js';
-import { QueryHookOptions } from '../model/types.js';
-import { BaseQueryArgs, BaseQueryFn } from './createApi.js';
+import { BaseQueryFn, QueryBuilderDefinition, QueryHookOptions } from '../model/types.js';
 
-export function makeQueryHook<R, A, Raw = R>(
+interface MakeQueryHookProps<R, A, Raw = R> extends Omit<QueryBuilderDefinition<R, A, Raw>, 'type'>{
     endpointName: string,
-    query: (arg: A) => BaseQueryArgs,
     baseQuery: BaseQueryFn<Raw>,
-    serializeArgs?: (args: A) => string,
-    providesTags?: (result: R, arg: A) => string[],
-    transformResponse?: (response: Raw, arg: A) => R,
-    transformErrorResponse?: (error: unknown, arg: A) => unknown,
+}
+
+export function makeQueryHook<R, A, Raw = R>({
+    query,
+    baseQuery,
+    endpointName,
+    providesTags,
+    serializeArgs,
     staleTime = 0,
+    transformResponse,
     keepUnusedDataFor = 0,
-) {
+    transformErrorResponse,
+}: MakeQueryHookProps<R, A, Raw>) {
     return function useGeneratedQuery(arg: A, options?: QueryHookOptions) {
         const enabled = options?.enabled ?? true;
         const refetchOnMount = options?.refetchOnMount ?? true;
@@ -57,7 +61,6 @@ export function makeQueryHook<R, A, Raw = R>(
 
             let promise!: Promise<R>;
 
-            // eslint-disable-next-line prefer-const
             promise = (async () => {
                 updateQueryState(key, (prevState) => ({
                     ...prevState,

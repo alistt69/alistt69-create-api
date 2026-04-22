@@ -19,6 +19,8 @@ export interface CreateApiUtil {
     updateQueryData: <R>(endpointName: string, arg: unknown, updater: (prevData: R | undefined) => R) => R;
 }
 
+export type BaseQueryFn<R = unknown> = (args: BaseQueryArgs) => Promise<R>;
+
 export type CreateApiResult<T extends Record<string, GeneralDefinition<unknown, unknown>>> = {
     [K in keyof T as HookName<K & string, T[K]['type']>]: InferHook<T[K]>;
 } & {

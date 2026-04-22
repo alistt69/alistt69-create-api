@@ -31,7 +31,7 @@ export const queryKeySerializers = new Map<string, (arg: unknown) => string>();
 export function setQueryKeySerializer(
     endpointName: string,
     serializer: (arg: unknown) => string,
-): void {
+) {
     queryKeySerializers.set(endpointName, serializer);
 }
 
@@ -48,7 +48,7 @@ export function getQueryData<R>(endpointName: string, arg: unknown): R | undefin
     return getQueryState(key)?.data as R | undefined;
 }
 
-export function setQueryData<R>(endpointName: string, arg: unknown, data: R): void {
+export function setQueryData<R>(endpointName: string, arg: unknown, data: R) {
     const key = getQueryKeyByEndpointArg(endpointName, arg);
 
     updateQueryState(key, (prevState) => ({
@@ -100,7 +100,7 @@ export function subscribeToQuery(key: string, listener: () => void, keepUnusedDa
     };
 }
 
-export function notifyQueryListeners(key: string): void {
+export function notifyQueryListeners(key: string) {
     const listeners = queryListeners.get(key) ?? [];
 
     listeners.forEach((listener) => {
@@ -112,15 +112,6 @@ export const queryStore = new Map<string, QueryState>();
 
 export function getQueryState(key: string): QueryState | undefined {
     return queryStore.get(key);
-}
-
-export function setQueryState(key: string, state: QueryState): void {
-    queryStore.set(key, state);
-    notifyQueryListeners(key);
-}
-
-export function getQueryKey(endpointName: string, args: unknown): string {
-    return `${endpointName}::${JSON.stringify(args)}`;
 }
 
 export function initQueryState(key: string): QueryState {
@@ -177,10 +168,6 @@ export function setQueryRunner(key: string, runner: QueryRunner) {
     queryRunners.set(key, runner);
 }
 
-export function getQueryRunner(key: string): QueryRunner | undefined {
-    return queryRunners.get(key);
-}
-
 export function refetchQueryByKey(key: string): Promise<unknown> | undefined {
     const runner = queryRunners.get(key);
 
@@ -229,7 +216,7 @@ export function unregisterQueryKey(endpointName: string, key: string) {
     }
 }
 
-export function cleanupQuery(key: string): void {
+export function cleanupQuery(key: string) {
     abortQueryByKey(key);
     clearTagsForQueryKey(key);
 
@@ -260,7 +247,7 @@ export function cleanupQuery(key: string): void {
 export const queryKeysByTag = new Map<string, Set<string>>();
 export const queryTagsByKey = new Map<string, Set<string>>();
 
-export function clearTagsForQueryKey(key: string): void {
+export function clearTagsForQueryKey(key: string) {
     const tags = queryTagsByKey.get(key);
 
     if (!tags) {
@@ -284,7 +271,7 @@ export function clearTagsForQueryKey(key: string): void {
     queryTagsByKey.delete(key);
 }
 
-export function setTagsForQueryKey(key: string, tags: string[]): void {
+export function setTagsForQueryKey(key: string, tags: string[]) {
     clearTagsForQueryKey(key);
 
     const uniqueTags = new Set(tags);
@@ -308,7 +295,7 @@ export const queryTagResolvers = new Map<string, (data: unknown, arg: unknown) =
 export function setQueryTagResolver(
     endpointName: string,
     resolver?: (data: unknown, arg: unknown) => string[],
-): void {
+) {
     if (!resolver) {
         queryTagResolvers.delete(endpointName);
         return;
@@ -353,15 +340,11 @@ export function updateQueryData<R>(
 
 export const queryAbortControllers = new Map<string, AbortController>();
 
-export function setQueryAbortController(key: string, controller: AbortController): void {
+export function setQueryAbortController(key: string, controller: AbortController) {
     queryAbortControllers.set(key, controller);
 }
 
-export function getQueryAbortController(key: string): AbortController | undefined {
-    return queryAbortControllers.get(key);
-}
-
-export function clearQueryAbortController(key: string, controller?: AbortController): void {
+export function clearQueryAbortController(key: string, controller?: AbortController) {
     if (controller && queryAbortControllers.get(key) !== controller) {
         return;
     }
@@ -369,7 +352,7 @@ export function clearQueryAbortController(key: string, controller?: AbortControl
     queryAbortControllers.delete(key);
 }
 
-export function abortQueryByKey(key: string): void {
+export function abortQueryByKey(key: string) {
     const controller = queryAbortControllers.get(key);
 
     if (!controller) {
@@ -380,7 +363,7 @@ export function abortQueryByKey(key: string): void {
     queryAbortControllers.delete(key);
 }
 
-export function scheduleCleanupIfUnused(key: string, keepUnusedDataFor: number): void {
+export function scheduleCleanupIfUnused(key: string, keepUnusedDataFor: number) {
     const subscriptionsCount = querySubscriptionsCount.get(key) ?? 0;
 
     if (subscriptionsCount > 0) {
