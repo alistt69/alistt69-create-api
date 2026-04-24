@@ -612,11 +612,12 @@ describe('fetchBaseQuery', () => {
     it('returns timeout error when request exceeds timeout', async () => {
         vi.useFakeTimers();
 
-        const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const request = input as Request;
+            const signal = init?.signal ?? request.signal;
 
             return new Promise<Response>((_resolve, reject) => {
-                request.signal.addEventListener('abort', () => {
+                signal?.addEventListener('abort', () => {
                     reject(new DOMException('Aborted', 'AbortError'));
                 }, { once: true });
             });
@@ -810,11 +811,12 @@ describe('fetchBaseQuery', () => {
     it('returns fetch error when externally aborted', async () => {
         const controller = new AbortController();
 
-        const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const request = input as Request;
+            const signal = init?.signal ?? request.signal;
 
             return new Promise<Response>((_resolve, reject) => {
-                request.signal.addEventListener('abort', () => {
+                signal?.addEventListener('abort', () => {
                     reject(new DOMException('Aborted', 'AbortError'));
                 }, { once: true });
             });
