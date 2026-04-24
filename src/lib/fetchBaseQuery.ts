@@ -156,19 +156,10 @@ export function fetchBaseQuery(
         const requestForMeta = new Request(finalUrl, {
             method: requestInit.method,
             headers: requestInit.headers,
-            body: requestInit.body,
-        });
-
-        const requestForFetch = new Request(finalUrl, {
-            method: requestInit.method,
-            headers: requestInit.headers,
-            body: requestInit.body,
         });
 
         try {
-            const response = await fetchFn(requestForFetch, {
-                signal: requestInit.signal,
-            });
+            const response = await fetchFn(finalUrl, requestInit);
 
             const meta: FetchBaseQueryMeta = {
                 request: requestForMeta,

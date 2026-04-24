@@ -475,6 +475,87 @@ describe('createApi core', () => {
 
         expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.title).toBe('Updated Local');
     });
+
+    it('supports blob response via custom responseHandler', async () => {
+        const bytes = new Uint8Array([1, 2, 3, 4]);
+
+        const baseQuery = fetchBaseQuery({
+            baseUrl: 'https://api.example.com',
+            fetchFn: vi.fn(async () => new Response(bytes, {
+                status: 200,
+                headers: { 'content-type': 'application/octet-stream' },
+            })) as typeof fetch,
+        });
+
+        const result = await baseQuery({
+            url: '/file',
+            responseHandler: (response) => response.blob(),
+        });
+
+        expect('data' in result).toBe(true);
+
+        if ('data' in result) {
+            const blobLike = result.data as Blob;
+            expect(typeof blobLike.arrayBuffer).toBe('function');
+            expect(blobLike.size).toBe(4);
+            expect(blobLike.type).toBe('application/octet-stream');
+        }
+    });
+
+    it('content-type responseHandler falls back to text for non-json binary content', async () => {
+        const bytes = new Uint8Array([65, 66, 67]);
+
+        const baseQuery = fetchBaseQuery({
+            baseUrl: 'https://api.example.com',
+            fetchFn: vi.fn(async () => new Response(bytes, {
+                status: 200,
+                headers: { 'content-type': 'application/octet-stream' },
+            })) as typeof fetch,
+        });
+
+        const result = await baseQuery({
+            url: '/binary',
+            responseHandler: 'content-type',
+        });
+
+        expect('data' in result).toBe(true);
+
+        if ('data' in result) {
+            expect(typeof result.data).toBe('string');
+        }
+    });
+
+    it('does not json-stringify Blob body', async () => {
+        const bodyBlob = new Blob(['hello'], { type: 'text/plain' });
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            expect(String(input)).toBe('https://api.example.com/upload-blob');
+            expect(init?.headers).toBeDefined();
+
+            const headers = new Headers(init?.headers);
+            expect(headers.get('content-type')).not.toBe('application/json');
+
+            expect(init?.body).toBe(bodyBlob);
+
+            return new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        });
+
+        const baseQuery = fetchBaseQuery({
+            baseUrl: 'https://api.example.com',
+            fetchFn: fetchMock as typeof fetch,
+        });
+
+        const result = await baseQuery({
+            url: '/upload-blob',
+            method: 'POST',
+            body: bodyBlob,
+        });
+
+        expect('data' in result && result.data).toEqual({ ok: true });
+    });
 });
 
 describe('fetchBaseQuery', () => {
@@ -484,11 +565,9 @@ describe('fetchBaseQuery', () => {
     });
 
     it('returns data and meta for successful json response', async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const request = input as Request;
-
-            expect(request.url).toBe('https://api.example.com/tickets?page=2&search=bug');
-            expect(request.method).toBe('GET');
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            expect(String(input)).toBe('https://api.example.com/tickets?page=2&search=bug');
+            expect(init?.method).toBe('GET');
 
             return new Response(
                 JSON.stringify({ ok: true, items: [{ id: '1', title: 'Alpha' }] }),
@@ -509,11 +588,15 @@ describe('fetchBaseQuery', () => {
             params: { page: 2, search: 'bug' },
         });
 
-        expect('data' in result && result.data).toEqual({
-            ok: true,
-            items: [{ id: '1', title: 'Alpha' }],
-        });
-        expect('data' in result && result.meta?.request.url).toBe('https://api.example.com/tickets?page=2&search=bug');
+        expect(result).toHaveProperty('data');
+        if ('data' in result) {
+            expect(result.data).toEqual({
+                ok: true,
+                items: [{ id: '1', title: 'Alpha' }],
+            });
+            expect(result.meta?.request.url).toBe('https://api.example.com/tickets?page=2&search=bug');
+        }
+
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -546,12 +629,13 @@ describe('fetchBaseQuery', () => {
     });
 
     it('applies prepareHeaders and serializes json body', async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const request = input as Request;
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            expect(String(input)).toBe('https://api.example.com/tickets/1');
 
-            expect(request.headers.get('authorization')).toBe('Bearer token');
-            expect(request.headers.get('content-type')).toBe('application/json');
-            expect(await request.text()).toBe(JSON.stringify({ title: 'Updated' }));
+            const headers = new Headers(init?.headers);
+            expect(headers.get('authorization')).toBe('Bearer token');
+            expect(headers.get('content-type')).toBe('application/json');
+            expect(init?.body).toBe(JSON.stringify({ title: 'Updated' }));
 
             return new Response(
                 JSON.stringify({ ok: true }),
@@ -577,7 +661,10 @@ describe('fetchBaseQuery', () => {
             body: { title: 'Updated' },
         });
 
-        expect('data' in result && result.data).toEqual({ ok: true });
+        expect(result).toHaveProperty('data');
+        if ('data' in result) {
+            expect(result.data).toEqual({ ok: true });
+        }
     });
 
     it('returns parsing error when json parsing fails', async () => {
