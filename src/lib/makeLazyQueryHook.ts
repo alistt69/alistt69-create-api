@@ -147,7 +147,6 @@ export function makeLazyQueryHook<R, A, Raw = R>({
 
                     updateQueryState(key, (prevState) => ({
                         ...prevState,
-                        data: undefined,
                         error,
                     }));
 

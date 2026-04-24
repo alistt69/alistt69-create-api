@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useSyncExternalStore } from 'use-sync-external-store/shim';
 import {
-    initQueryState,
     setQueryRunner,
+    initQueryState,
+    clearQueryRunner,
     subscribeToQuery,
     registerQueryKey,
     setInFlightQuery,
@@ -10,7 +11,6 @@ import {
     updateQueryState,
     setTagsForQueryKey,
     clearInFlightQuery,
-    scheduleCleanupIfUnused,
     setQueryAbortController,
     clearQueryAbortController,
 } from '../model/queryStore.js';
@@ -110,7 +110,6 @@ export function makeQueryHook<R, A, Raw = R>({
 
                     updateQueryState(key, (prevState) => ({
                         ...prevState,
-                        data: undefined,
                         error,
                     }));
 
@@ -148,8 +147,13 @@ export function makeQueryHook<R, A, Raw = R>({
 
         useEffect(() => {
             registerQueryKey(endpointName, key);
-            setQueryRunner(key, () => run(arg));
-        }, [endpointName, key, run, arg]);
+
+            if (enabled) {
+                setQueryRunner(key, () => run(arg));
+            } else {
+                clearQueryRunner(key);
+            }
+        }, [endpointName, key, run, arg, enabled]);
 
         useEffect(() => {
             if (!enabled) {

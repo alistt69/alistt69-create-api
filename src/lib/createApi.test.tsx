@@ -1,19 +1,20 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    inFlightQueries,
-    queryAbortControllers,
-    queryEndpointByKey,
+    queryStore,
+    queryRunners,
+    queryListeners,
+    queryTagsByKey,
+    queryKeysByTag,
     queryGcTimeouts,
+    inFlightQueries,
+    refetchQueryByKey,
+    queryTagResolvers,
+    queryEndpointByKey,
     queryKeySerializers,
     queryKeysByEndpoint,
-    queryKeysByTag,
-    queryListeners,
-    queryRunners,
-    queryStore,
+    queryAbortControllers,
     querySubscriptionsCount,
-    queryTagResolvers,
-    queryTagsByKey,
 } from '../model/queryStore.js';
 import { BaseQueryArgs, createApi } from './createApi.js';
 import { fetchBaseQuery } from './fetchBaseQuery.js';
@@ -703,6 +704,982 @@ describe('createApi core', () => {
         expect(second.result.current.data?.title).toBe('Local Fresh');
         expect(second.result.current.isFetching).toBe(false);
         expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('does not populate disabled query from mutation invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketsQuery({ page: 1 }, { enabled: false }));
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(disabledQuery.result.current.isLoading).toBe(false);
+        expect(disabledQuery.result.current.isFetching).toBe(false);
+    });
+
+    it('invalidates unused cached queries kept by keepUnusedDataFor', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        await advance(1000);
+        expect(query.result.current.data?.callNo).toBe(1);
+
+        query.unmount();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After Mutation', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(2);
+
+        const remounted = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        expect(remounted.result.current.data?.callNo).toBe(2);
+        expect(remounted.result.current.data?.items[0]?.title).toBe('After Mutation');
+    });
+
+    it('keeps query runner bound to the original arg snapshot for old cache keys', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+
+        query.rerender({ id: '2' });
+        await advance(200);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+
+        act(() => {
+            void refetchQueryByKey('getTicketById::1');
+        });
+
+        await advance(100);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+    });
+
+    it('registers runnable query again when enabled switches from false to true', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: false } },
+        );
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+
+        query.rerender({ enabled: true });
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+        expect(query.result.current.data?.page).toBe(1);
+    });
+
+    it('stops invalidation-driven refetch after query becomes disabled', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: true } },
+        );
+
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+
+        query.rerender({ enabled: false });
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+    });
+
+    it('lazy aborted request does not write error state after unmount', async () => {
+        const { api } = setupApi();
+
+        const lazy = renderHook(() => api.useLazyGetTicketsQuery());
+
+        act(() => {
+            void lazy.result.current[0]({ page: 1 }).catch(() => undefined);
+        });
+
+        lazy.unmount();
+        await advance(1000);
+
+        expect(api.util.getQueryData<TicketsListResponse>('getTickets', { page: 1 })?.page).toBe(1);
+    });
+
+    it('does not populate disabled query from endpoint invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketsQuery({ page: 1 }, { enabled: false }));
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(disabledQuery.result.current.isLoading).toBe(false);
+        expect(disabledQuery.result.current.isFetching).toBe(false);
+    });
+
+    it('does not populate disabled query from tag invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketByIdQuery('1', { enabled: false }));
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(calls.detailCallsById.get('1')).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated by Tag', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBeUndefined();
+        expect(disabledQuery.result.current.data).toBeUndefined();
+        expect(disabledQuery.result.current.isLoading).toBe(false);
+        expect(disabledQuery.result.current.isFetching).toBe(false);
+    });
+
+    it('becomes runnable again when enabled switches from false to true', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: false } },
+        );
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+
+        query.rerender({ enabled: true });
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+        expect(query.result.current.data?.page).toBe(1);
+    });
+
+    it('stops invalidation-driven refetch after query becomes disabled', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: true } },
+        );
+
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+
+        query.rerender({ enabled: false });
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+    });
+
+    it('keeps query runner bound to the original arg snapshot for old cache keys', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+
+        query.rerender({ id: '2' });
+        await advance(200);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+
+        act(() => {
+            void refetchQueryByKey('getTicketById::1');
+        });
+
+        await advance(100);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+    });
+
+    it('old key refetch keeps old key tags bound to original arg snapshot', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+
+        query.rerender({ id: '2' });
+        await advance(200);
+
+        act(() => {
+            void refetchQueryByKey('getTicketById::1');
+        });
+
+        await advance(100);
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Tag Check', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+    });
+
+    it('old key refetch keeps error transform bound to original arg snapshot', async () => {
+        const seenArgs: string[] = [];
+
+        const api = createApi({
+            baseQuery: async () => ({
+                error: { status: 500, data: { message: 'fail' } },
+            }),
+            endpoints: (builder) => ({
+                getBroken: builder.query<unknown, string>({
+                    query: (id) => ({ url: `/broken/${id}` }),
+                    serializeArgs: (id) => id,
+                    transformErrorResponse: (error, arg) => {
+                        seenArgs.push(arg);
+                        return { arg, error };
+                    },
+                    keepUnusedDataFor: 10000,
+                }),
+            }),
+        });
+
+        const query = renderHook(
+            ({ id }) => api.useGetBrokenQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(seenArgs).toContain('1');
+
+        query.rerender({ id: '2' });
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        seenArgs.length = 0;
+
+        await act(async () => {
+            await refetchQueryByKey('getBroken::1')?.catch(() => undefined);
+        });
+
+        expect(seenArgs).toEqual(['1']);
+    });
+
+    it('cancels scheduled cleanup when query remounts before keepUnusedDataFor expires', async () => {
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+        expect(first.result.current.data?.callNo).toBe(1);
+
+        first.unmount();
+        await advance(5000);
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+        expect(second.result.current.data?.callNo).toBe(1);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('does not cleanup cache while another subscriber is still mounted', async () => {
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        await advance(200);
+        expect(first.result.current.data?.callNo).toBe(1);
+        expect(second.result.current.data?.callNo).toBe(1);
+
+        first.unmount();
+        await advance(11000);
+
+        expect(second.result.current.data?.callNo).toBe(1);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('does not refetch query by endpoint after cache entry was garbage collected', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        await advance(1000);
+        expect(query.result.current.data?.callNo).toBe(1);
+
+        query.unmount();
+        await advance(6000);
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After GC', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+    });
+
+    it('updateQueryData refreshes cache freshness and prevents stale remount refetch', async () => {
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+
+        await advance(3000);
+
+        act(() => {
+            api.util.updateQueryData<TicketDetailResponse>('getTicketById', '2', (prev) => ({
+                ...prev!,
+                title: 'Updated Fresh',
+            }));
+        });
+
+        first.unmount();
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(second.result.current.data?.title).toBe('Updated Fresh');
+        expect(second.result.current.isFetching).toBe(false);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('setQueryData updates tags used by tag invalidation for an existing query key', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketByIdQuery('1'));
+        await advance(100);
+        expect(calls.detailCallsById.get('1')).toBe(1);
+
+        act(() => {
+            api.util.setQueryData<TicketDetailResponse>('getTicketById', '1', {
+                id: '1',
+                title: 'Local Tagged',
+                callNo: 999,
+                servedAt: 'now',
+            });
+        });
+
+        query.unmount();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Retagged', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBe(2);
+    });
+
+    it('old key refetch does not write newer arg result into older cache key', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+
+        query.rerender({ id: '2' });
+        await advance(200);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+
+        act(() => {
+            void refetchQueryByKey('getTicketById::1');
+        });
+        await advance(100);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')).toMatchObject({ id: '1' });
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')).toMatchObject({ id: '2' });
+    });
+
+    it('old key refetch keeps old entity payload under old cache key', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+        const firstTitle = api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.title;
+
+        query.rerender({ id: '2' });
+        await advance(200);
+        const secondTitle = api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.title;
+
+        act(() => {
+            void refetchQueryByKey('getTicketById::1');
+        });
+        await advance(100);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.title).toBe(firstTitle);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.title).toBe(secondTitle);
+    });
+
+    it('disabled query stays empty after endpoint invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketsQuery({ page: 1 }, { enabled: false }));
+        expect(disabledQuery.result.current.data).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+        expect(disabledQuery.result.current.data).toBeUndefined();
+    });
+
+    it('disabled query stays empty after tag invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketByIdQuery('1', { enabled: false }));
+        expect(disabledQuery.result.current.data).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated by Tag', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBeUndefined();
+        expect(disabledQuery.result.current.data).toBeUndefined();
+    });
+
+    it('garbage-collected query is not refetched by later invalidation', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+
+        query.unmount();
+        await advance(6000);
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After GC', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+    });
+
+    it('remount before GC preserves previous cache instead of initial loading', async () => {
+        const { api } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+        expect(first.result.current.data?.callNo).toBe(1);
+
+        first.unmount();
+        await advance(5000);
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(second.result.current.data?.callNo).toBe(1);
+        expect(second.result.current.isLoading).toBe(false);
+    });
+
+    it('updateQueryData keeps cache fresh on remount', async () => {
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+        await advance(3000); // staleTime = 2000
+
+        act(() => {
+            api.util.updateQueryData<TicketDetailResponse>('getTicketById', '2', (prev) => ({
+                ...prev!,
+                title: 'Fresh Updated',
+            }));
+        });
+
+        first.unmount();
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(second.result.current.data?.title).toBe('Fresh Updated');
+        expect(second.result.current.isFetching).toBe(false);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('unused cache invalidation updates remounted data payload', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        await advance(1000);
+        expect(query.result.current.data?.items[0]?.title).toBe('Alpha');
+
+        query.unmount();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Alpha Updated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        const remounted = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        expect(remounted.result.current.data?.items[0]?.title).toBe('Alpha Updated');
+    });
+
+    it('keeps previous data when background refetch fails', async () => {
+        let shouldFail = false;
+
+        const api = createApi({
+            baseQuery: async (args: BaseQueryArgs) => {
+                if (args.url === '/ticket/2') {
+                    await wait(100, args.signal);
+
+                    if (shouldFail) {
+                        return {
+                            error: {
+                                status: 500,
+                                data: { message: 'refetch failed' },
+                            },
+                        };
+                    }
+
+                    return {
+                        data: {
+                            id: '2',
+                            title: 'Alpha',
+                            callNo: 1,
+                            servedAt: 't1',
+                        } satisfies TicketDetailResponse,
+                    };
+                }
+
+                return {
+                    error: {
+                        status: 500,
+                        data: { message: 'unexpected request' },
+                    },
+                };
+            },
+            endpoints: (builder) => ({
+                getTicketById: builder.query<TicketDetailResponse, string>({
+                    query: (id) => ({ url: `/ticket/${id}`, method: 'GET' }),
+                    serializeArgs: (id) => id,
+                    staleTime: 2000,
+                    keepUnusedDataFor: 10000,
+                }),
+            }),
+        });
+
+        const query = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        await advance(100);
+
+        expect(query.result.current.data).toEqual({
+            id: '2',
+            title: 'Alpha',
+            callNo: 1,
+            servedAt: 't1',
+        });
+        expect(query.result.current.error).toBeUndefined();
+
+        shouldFail = true;
+
+        query.unmount();
+        await advance(3000);
+
+        const remounted = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(remounted.result.current.data?.title).toBe('Alpha');
+        expect(remounted.result.current.isFetching).toBe(true);
+
+        await advance(100);
+
+        expect(remounted.result.current.data?.title).toBe('Alpha');
+        expect(remounted.result.current.error).toEqual({
+            status: 500,
+            data: { message: 'refetch failed' },
+        });
+        expect(remounted.result.current.isFetching).toBe(false);
+    });
+
+    it('keeps previous data when background refetch fails', async () => {
+        let shouldFail = false;
+
+        const api = createApi({
+            baseQuery: async (args: BaseQueryArgs) => {
+                if (args.url === '/ticket/2') {
+                    await wait(100, args.signal);
+
+                    if (shouldFail) {
+                        return {
+                            error: {
+                                status: 500,
+                                data: { message: 'refetch failed' },
+                            },
+                        };
+                    }
+
+                    return {
+                        data: {
+                            id: '2',
+                            title: 'Alpha',
+                            callNo: 1,
+                            servedAt: 't1',
+                        } satisfies TicketDetailResponse,
+                    };
+                }
+
+                return {
+                    error: {
+                        status: 500,
+                        data: { message: 'unexpected request' },
+                    },
+                };
+            },
+            endpoints: (builder) => ({
+                getTicketById: builder.query<TicketDetailResponse, string>({
+                    query: (id) => ({ url: `/ticket/${id}`, method: 'GET' }),
+                    serializeArgs: (id) => id,
+                    staleTime: 2000,
+                    keepUnusedDataFor: 10000,
+                }),
+            }),
+        });
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(100);
+
+        expect(first.result.current.data?.title).toBe('Alpha');
+        expect(first.result.current.error).toBeUndefined();
+
+        shouldFail = true;
+
+        first.unmount();
+        await advance(3000);
+
+        const remounted = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(remounted.result.current.data?.title).toBe('Alpha');
+        expect(remounted.result.current.isFetching).toBe(true);
+
+        await advance(100);
+
+        expect(remounted.result.current.data?.title).toBe('Alpha');
+        expect(remounted.result.current.error).toEqual({
+            status: 500,
+            data: { message: 'refetch failed' },
+        });
+        expect(remounted.result.current.isFetching).toBe(false);
+    });
+
+    it('lazy query keeps previous data when refetch fails', async () => {
+        let shouldFail = false;
+
+        const api = createApi({
+            baseQuery: async (args: BaseQueryArgs) => {
+                if (args.url === '/ticket/2') {
+                    await wait(100, args.signal);
+
+                    if (shouldFail) {
+                        return {
+                            error: {
+                                status: 500,
+                                data: { message: 'lazy refetch failed' },
+                            },
+                        };
+                    }
+
+                    return {
+                        data: {
+                            id: '2',
+                            title: 'Alpha',
+                            callNo: 1,
+                            servedAt: 't1',
+                        } satisfies TicketDetailResponse,
+                    };
+                }
+
+                return {
+                    error: {
+                        status: 500,
+                        data: { message: 'unexpected request' },
+                    },
+                };
+            },
+            endpoints: (builder) => ({
+                getTicketById: builder.query<TicketDetailResponse, string>({
+                    query: (id) => ({ url: `/ticket/${id}`, method: 'GET' }),
+                    serializeArgs: (id) => id,
+                    keepUnusedDataFor: 10000,
+                }),
+            }),
+        });
+
+        const lazy = renderHook(() => api.useLazyGetTicketByIdQuery());
+
+        act(() => {
+            void lazy.result.current[0]('2').catch(() => undefined);
+        });
+        await advance(100);
+
+        expect(lazy.result.current[1].data?.title).toBe('Alpha');
+
+        shouldFail = true;
+
+        act(() => {
+            void lazy.result.current[1].refetch()?.catch(() => undefined);
+        });
+        await advance(100);
+
+        expect(lazy.result.current[1].data?.title).toBe('Alpha');
+        expect(lazy.result.current[1].error).toEqual({
+            status: 500,
+            data: { message: 'lazy refetch failed' },
+        });
+    });
+
+    it('endpoint invalidation skips disabled query keys without producing network calls', async () => {
+        const { api, calls } = setupApi();
+
+        renderHook(() => api.useGetTicketsQuery({ page: 1 }, { enabled: false }));
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+    });
+
+    it('external abort is reported as fetch error rather than timeout', async () => {
+        const controller = new AbortController();
+
+        const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input as Request;
+            const signal = init?.signal ?? request.signal;
+
+            return new Promise<Response>((_resolve, reject) => {
+                signal?.addEventListener('abort', () => {
+                    reject(new DOMException('Aborted', 'AbortError'));
+                }, { once: true });
+            });
+        });
+
+        const baseQuery = fetchBaseQuery({
+            baseUrl: 'https://api.example.com',
+            fetchFn: fetchMock as typeof fetch,
+        });
+
+        const promise = baseQuery({
+            url: '/abort',
+            signal: controller.signal,
+        });
+
+        controller.abort();
+
+        await expect(promise).resolves.toEqual({
+            error: {
+                status: 'FETCH_ERROR',
+                error: 'AbortError: Aborted',
+            },
+        });
+    });
+
+    it('re-enables endpoint invalidation after query switches from disabled to enabled', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: false } },
+        );
+
+        expect(calls.listCallsByPage.get(1)).toBeUndefined();
+
+        query.rerender({ enabled: true });
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After Enable', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(2);
+    });
+
+    it('stops endpoint invalidation after query switches from enabled to disabled', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(
+            ({ enabled }) => api.useGetTicketsQuery({ page: 1 }, { enabled }),
+            { initialProps: { enabled: true } },
+        );
+
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+
+        query.rerender({ enabled: false });
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After Disable', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(1000);
+
+        expect(calls.listCallsByPage.get(1)).toBe(1);
+        expect(query.result.current.data?.page).toBe(1);
+    });
+
+    it('tag invalidation refetches unused cached query before garbage collection', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketByIdQuery('1'));
+        await advance(100);
+        expect(calls.detailCallsById.get('1')).toBe(1);
+
+        query.unmount();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Updated by Tag', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBe(2);
+
+        const remounted = renderHook(() => api.useGetTicketByIdQuery('1'));
+        expect(remounted.result.current.data?.title).toBe('Updated by Tag');
+    });
+
+    it('tag invalidation does not refetch query after cache entry was garbage collected', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketByIdQuery('1'));
+        await advance(100);
+        expect(calls.detailCallsById.get('1')).toBe(1);
+
+        query.unmount();
+        await advance(11000);
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After GC Tag', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBe(1);
+    });
+
+    it('disabled tagged query stays non-runnable after manual cache write', async () => {
+        const { api, calls } = setupApi();
+
+        const disabledQuery = renderHook(() => api.useGetTicketByIdQuery('1', { enabled: false }));
+
+        act(() => {
+            api.util.setQueryData<TicketDetailResponse>('getTicketById', '1', {
+                id: '1',
+                title: 'Local Disabled',
+                callNo: 999,
+                servedAt: 'now',
+            });
+        });
+
+        expect(disabledQuery.result.current.data?.title).toBe('Local Disabled');
+        expect(calls.detailCallsById.get('1')).toBeUndefined();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'Mutated Tag', delayMs: 100 }).catch(() => undefined);
+        });
+
+        await advance(100);
+        await advance(100);
+
+        expect(calls.detailCallsById.get('1')).toBeUndefined();
+        expect(disabledQuery.result.current.data?.title).toBe('Local Disabled');
     });
 });
 
