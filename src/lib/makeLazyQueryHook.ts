@@ -3,7 +3,6 @@ import { useSyncExternalStore } from 'use-sync-external-store/shim';
 import {
     setQueryRunner,
     initQueryState,
-    clearQueryRunner,
     getInFlightQuery,
     registerQueryKey,
     setInFlightQuery,
@@ -11,7 +10,6 @@ import {
     subscribeToQuery,
     clearInFlightQuery,
     setTagsForQueryKey,
-    unregisterQueryKey,
     setQueryAbortController,
     scheduleCleanupIfUnused,
     clearQueryAbortController,
@@ -145,21 +143,15 @@ export function makeLazyQueryHook<R, A, Raw = R>({
                     return data;
                 }
                 catch (error) {
-                    if (controller.signal.aborted) {
-                        throw error;
-                    }
-
-                    const transformedError = transformErrorResponse
-                        ? transformErrorResponse(error, arg)
-                        : error;
+                    if (controller.signal.aborted) throw error;
 
                     updateQueryState(key, (prevState) => ({
                         ...prevState,
                         data: undefined,
-                        error: transformedError,
+                        error,
                     }));
 
-                    throw transformedError;
+                    throw error;
                 }
                 finally {
                     if (!controller.signal.aborted) {
@@ -197,8 +189,6 @@ export function makeLazyQueryHook<R, A, Raw = R>({
             const prevOwnedKey = ownedKeyRef.current;
 
             if (prevOwnedKey && prevOwnedKey !== nextKey) {
-                clearQueryRunner(prevOwnedKey);
-                unregisterQueryKey(endpointName, prevOwnedKey);
                 scheduleCleanupIfUnused(prevOwnedKey, keepUnusedDataFor);
             }
 
@@ -226,15 +216,13 @@ export function makeLazyQueryHook<R, A, Raw = R>({
             }
 
             return () => {
-                clearQueryRunner(currentKey);
-                unregisterQueryKey(endpointName, currentKey);
                 scheduleCleanupIfUnused(currentKey, keepUnusedDataFor);
 
                 if (ownedKeyRef.current === currentKey) {
                     ownedKeyRef.current = null;
                 }
             };
-        }, [currentKey, endpointName, keepUnusedDataFor]);
+        }, [currentKey, keepUnusedDataFor]);
 
         return [trigger, { ...state, refetch }] as const;
     };

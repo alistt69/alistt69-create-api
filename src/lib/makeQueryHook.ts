@@ -6,12 +6,11 @@ import {
     subscribeToQuery,
     registerQueryKey,
     setInFlightQuery,
-    clearQueryRunner,
     getInFlightQuery,
     updateQueryState,
     setTagsForQueryKey,
-    unregisterQueryKey,
     clearInFlightQuery,
+    scheduleCleanupIfUnused,
     setQueryAbortController,
     clearQueryAbortController,
 } from '../model/queryStore.js';
@@ -49,7 +48,7 @@ export function makeQueryHook<R, A, Raw = R>({
             () => initQueryState(key),
         );
 
-        const run = useCallback(() => {
+        const run = useCallback((requestArg: A) => {
             const existingPromise = getInFlightQuery<R>(key);
 
             if (existingPromise) {
@@ -72,7 +71,7 @@ export function makeQueryHook<R, A, Raw = R>({
                 }));
 
                 try {
-                    const request = query(argRef.current);
+                    const request = query(requestArg);
                     const result = await baseQuery({
                         ...request,
                         signal: controller.signal,
@@ -80,14 +79,14 @@ export function makeQueryHook<R, A, Raw = R>({
 
                     if ('error' in result) {
                         const transformedError = transformErrorResponse
-                            ? transformErrorResponse(result.error, argRef.current)
+                            ? transformErrorResponse(result.error, requestArg)
                             : result.error;
 
                         throw transformedError;
                     }
 
                     const raw = result.data;
-                    const data = transformResponse ? transformResponse(raw, argRef.current) : raw as unknown as R;
+                    const data = transformResponse ? transformResponse(raw, requestArg) : raw as unknown as R;
 
                     if (!controller.signal.aborted) {
                         updateQueryState(key, (prevState) => ({
@@ -98,7 +97,7 @@ export function makeQueryHook<R, A, Raw = R>({
                         }));
 
                         if (providesTags) {
-                            setTagsForQueryKey(key, providesTags(data, argRef.current));
+                            setTagsForQueryKey(key, providesTags(data, requestArg));
                         }
                     }
 
@@ -144,18 +143,13 @@ export function makeQueryHook<R, A, Raw = R>({
         ]);
 
         const refetch = useCallback(() => {
-            return run();
+            return run(argRef.current);
         }, [run]);
 
         useEffect(() => {
             registerQueryKey(endpointName, key);
-            setQueryRunner(key, run);
-
-            return () => {
-                clearQueryRunner(key);
-                unregisterQueryKey(endpointName, key);
-            };
-        }, [endpointName, key, run]);
+            setQueryRunner(key, () => run(arg));
+        }, [endpointName, key, run, arg]);
 
         useEffect(() => {
             if (!enabled) {
@@ -165,7 +159,7 @@ export function makeQueryHook<R, A, Raw = R>({
             const currentState = initQueryState(key);
 
             if (currentState.data === undefined || currentState.fulfilledAt === undefined) {
-                void run().catch(() => undefined);
+                void run(arg).catch(() => undefined);
                 return;
             }
 
@@ -176,7 +170,7 @@ export function makeQueryHook<R, A, Raw = R>({
             const isFresh = Date.now() - currentState.fulfilledAt < staleTime;
 
             if (!isFresh) {
-                void run().catch(() => undefined);
+                void run(arg).catch(() => undefined);
             }
         }, [enabled, key, run, staleTime, refetchOnMount]);
 

@@ -57,7 +57,7 @@ export function setQueryData<R>(endpointName: string, arg: unknown, data: R) {
         error: undefined,
         isLoading: false,
         isFetching: false,
-        fulfilledAt: prevState.fulfilledAt ?? Date.now(),
+        fulfilledAt: Date.now(),
     }));
 
     const tags = getQueryTagsForData(endpointName, data, arg);
@@ -223,17 +223,7 @@ export function cleanupQuery(key: string) {
     const endpointName = queryEndpointByKey.get(key);
 
     if (endpointName) {
-        const keys = queryKeysByEndpoint.get(endpointName);
-
-        if (keys) {
-            keys.delete(key);
-
-            if (keys.size === 0) {
-                queryKeysByEndpoint.delete(endpointName);
-            }
-        }
-
-        queryEndpointByKey.delete(key);
+        unregisterQueryKey(endpointName, key);
     }
 
     queryStore.delete(key);
@@ -329,7 +319,7 @@ export function updateQueryData<R>(
         error: undefined,
         isLoading: false,
         isFetching: false,
-        fulfilledAt: prevState.fulfilledAt ?? Date.now(),
+        fulfilledAt: Date.now(),
     }));
 
     const tags = getQueryTagsForData(endpointName, nextData, arg);

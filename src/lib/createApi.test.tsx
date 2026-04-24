@@ -556,6 +556,154 @@ describe('createApi core', () => {
 
         expect('data' in result && result.data).toEqual({ ok: true });
     });
+
+    it('lazy query transforms error response only once', async () => {
+        const transformErrorResponse = vi.fn((error) => ({
+            wrapped: error,
+        }));
+
+        const api = createApi({
+            baseQuery: async () => ({
+                error: { status: 500, data: { message: 'fail' } },
+            }),
+            endpoints: (builder) => ({
+                getBroken: builder.query<unknown, string>({
+                    query: (id) => ({ url: `/broken/${id}` }),
+                    transformErrorResponse,
+                }),
+            }),
+        });
+
+        const lazy = renderHook(() => api.useLazyGetBrokenQuery());
+
+        await act(async () => {
+            await expect(lazy.result.current[0]('1')).rejects.toEqual({
+                wrapped: { status: 500, data: { message: 'fail' } },
+            });
+        });
+
+        expect(transformErrorResponse).toHaveBeenCalledTimes(1);
+        expect(lazy.result.current[1].error).toEqual({
+            wrapped: { status: 500, data: { message: 'fail' } },
+        });
+    });
+
+    it('setQueryData refreshes cache freshness and notifies subscribers', async () => {
+        vi.useFakeTimers();
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+
+        expect(first.result.current.data?.callNo).toBe(1);
+
+        await advance(3000); // staleTime = 2000
+
+        act(() => {
+            api.util.setQueryData<TicketDetailResponse>('getTicketById', '2', {
+                id: '2',
+                title: 'Local Fresh',
+                callNo: 999,
+                servedAt: 'local',
+            });
+        });
+
+        expect(first.result.current.data?.title).toBe('Local Fresh');
+        expect(first.result.current.data?.callNo).toBe(999);
+
+        first.unmount();
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(second.result.current.data?.title).toBe('Local Fresh');
+        expect(second.result.current.isFetching).toBe(false);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+
+        await advance(200);
+
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
+
+    it('invalidates unused cached queries kept by keepUnusedDataFor', async () => {
+        const { api, calls } = setupApi();
+
+        const query = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+        await advance(1000);
+
+        expect(query.result.current.data?.callNo).toBe(1);
+
+        query.unmount();
+
+        const mutation = renderHook(() => api.useEditTicketMutation());
+
+        act(() => {
+            void mutation.result.current[0]({ id: '1', title: 'After Mutation', delayMs: 100 });
+        });
+
+        await advance(100);
+        await advance(1000);
+        expect(calls.listCallsByPage.get(1)).toBe(2);
+
+        const remounted = renderHook(() => api.useGetTicketsQuery({ page: 1 }));
+
+        expect(remounted.result.current.data?.callNo).toBe(2);
+        expect(remounted.result.current.data?.items[0]?.title).toBe('After Mutation');
+    });
+
+    it('keeps query runner bound to the original arg snapshot for old cache keys', async () => {
+        const { api } = setupApi();
+
+        const query = renderHook(
+            ({ id }) => api.useGetTicketByIdQuery(id),
+            { initialProps: { id: '1' } },
+        );
+
+        await advance(100);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+
+        query.rerender({ id: '2' });
+        await advance(200);
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+
+        act(() => {
+            void query.result.current.refetch();
+        });
+
+        await advance(200);
+
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '1')?.id).toBe('1');
+        expect(api.util.getQueryData<TicketDetailResponse>('getTicketById', '2')?.id).toBe('2');
+    });
+
+    it('setQueryData refreshes cache freshness and notifies subscribers', async () => {
+        const { api, calls } = setupApi();
+
+        const first = renderHook(() => api.useGetTicketByIdQuery('2'));
+        await advance(200);
+        expect(first.result.current.data?.callNo).toBe(1);
+
+        await advance(3000);
+
+        act(() => {
+            api.util.setQueryData<TicketDetailResponse>('getTicketById', '2', {
+                id: '2',
+                title: 'Local Fresh',
+                callNo: 999,
+                servedAt: 'local',
+            });
+        });
+
+        expect(first.result.current.data?.title).toBe('Local Fresh');
+        expect(first.result.current.data?.callNo).toBe(999);
+
+        first.unmount();
+
+        const second = renderHook(() => api.useGetTicketByIdQuery('2'));
+
+        expect(second.result.current.data?.title).toBe('Local Fresh');
+        expect(second.result.current.isFetching).toBe(false);
+        expect(calls.detailCallsById.get('2')).toBe(1);
+    });
 });
 
 describe('fetchBaseQuery', () => {
