@@ -151,14 +151,19 @@ export function fetchBaseQuery(
 
         requestInit.signal = controller.signal;
 
-        const request = new Request(finalUrl, requestInit);
         const fetchFn = options.fetchFn ?? fetch;
 
+        const requestForMeta = new Request(finalUrl, {
+            method: requestInit.method,
+            headers: requestInit.headers,
+            body: requestInit.body,
+        });
+
         try {
-            const response = await fetchFn(request);
+            const response = await fetchFn(finalUrl, requestInit);
 
             const meta: FetchBaseQueryMeta = {
-                request,
+                request: requestForMeta,
                 response,
             };
 
