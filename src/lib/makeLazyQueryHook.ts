@@ -18,10 +18,10 @@ import {
 } from '../model/queryStore.js';
 import { BaseQueryFn, InferQueryState, QueryBuilderDefinition } from '../model/types.js';
 
-interface MakeLazyQueryHookProps<R, A, Raw = R> extends Omit<QueryBuilderDefinition<R, A, Raw>, 'type'>{
-    endpointName: string,
-    baseQuery: BaseQueryFn<Raw>,
-}
+type MakeLazyQueryHookProps<R, A, Raw = R> = {
+    endpointName: string;
+    baseQuery: BaseQueryFn<Raw>;
+} & Omit<QueryBuilderDefinition<R, A, Raw>, 'type'>;
 
 export function makeLazyQueryHook<R, A, Raw = R>({
     query,
@@ -101,6 +101,7 @@ export function makeLazyQueryHook<R, A, Raw = R>({
 
             let promise!: Promise<R>;
 
+            // eslint-disable-next-line prefer-const
             promise = (async () => {
                 updateQueryState(key, (prevState) => ({
                     ...prevState,
@@ -112,14 +113,21 @@ export function makeLazyQueryHook<R, A, Raw = R>({
 
                 try {
                     const request = query(arg);
-                    const raw = await baseQuery({
+                    const result = await baseQuery({
                         ...request,
                         signal: controller.signal,
                     });
 
-                    const data = transformResponse
-                        ? transformResponse(raw, arg)
-                        : (raw as R);
+                    if ('error' in result) {
+                        const transformedError = transformErrorResponse
+                            ? transformErrorResponse(result.error, arg)
+                            : result.error;
+
+                        throw transformedError;
+                    }
+
+                    const raw = result.data;
+                    const data = transformResponse ? transformResponse(raw, arg) : raw as unknown as R;
 
                     if (!controller.signal.aborted) {
                         updateQueryState(key, (prevState) => ({
@@ -171,13 +179,13 @@ export function makeLazyQueryHook<R, A, Raw = R>({
 
             return promise;
         }, [
+            query,
             baseQuery,
             endpointName,
             providesTags,
-            query,
             serializeArgs,
-            transformErrorResponse,
             transformResponse,
+            transformErrorResponse,
         ]);
 
         const trigger = useCallback((arg: A) => {

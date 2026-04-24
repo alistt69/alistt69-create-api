@@ -19,7 +19,21 @@ export interface CreateApiUtil {
     updateQueryData: <R>(endpointName: string, arg: unknown, updater: (prevData: R | undefined) => R) => R;
 }
 
-export type BaseQueryFn<R = unknown> = (args: BaseQueryArgs) => Promise<R>;
+export type BaseQueryResult<D = unknown, E = unknown, M = unknown>
+    = | {
+        data: D;
+        error?: undefined;
+        meta?: M;
+    }
+    | {
+        error: E;
+        data?: undefined;
+        meta?: M;
+    };
+
+export type BaseQueryFn<D = unknown, E = unknown, M = unknown, A = BaseQueryArgs> = (
+    args: A,
+) => Promise<BaseQueryResult<D, E, M>>;
 
 export type CreateApiResult<T extends Record<string, GeneralDefinition<unknown, unknown>>> = {
     [K in keyof T as HookName<K & string, T[K]['type']>]: InferHook<T[K]>;
@@ -42,15 +56,7 @@ export type InferHook<Def> = Def extends QueryBuilderDefinition<infer R, infer A
 
 export type QueryTagsResolver<R, A> = (result: R, arg: A) => string[];
 
-/**
- * Query endpoint definition.
- *
- * @template R Final result type that will be exposed in hook `data`
- * after `transformResponse` is applied.
- * @template A Query argument type passed into the generated hook and `query`.
- * @template Raw Raw response type returned by `baseQuery` before transformation.
- */
-export interface QueryBuilderDefinition<R, A, Raw = R> {
+export interface QueryBuilderDefinitionBase<R, A> {
     /**
      * Internal endpoint kind discriminator.
      */
@@ -100,14 +106,6 @@ export interface QueryBuilderDefinition<R, A, Raw = R> {
     providesTags?: QueryTagsResolver<R, A>;
 
     /**
-     * Transforms raw `baseQuery` response into final hook result.
-     *
-     * Use this when transport response shape differs from the desired `data` shape.
-     * The returned value becomes cached query data and is exposed by the hook.
-     */
-    transformResponse?: (response: Raw, arg: A) => R;
-
-    /**
      * Transforms query error before it is written into hook state.
      *
      * Useful for normalizing transport errors into a shape convenient for UI.
@@ -115,17 +113,39 @@ export interface QueryBuilderDefinition<R, A, Raw = R> {
     transformErrorResponse?: (error: unknown, arg: A) => unknown;
 }
 
-export type MutationTagsResolver<R, A> = (result: R, arg: A) => string[];
+interface QueryBuilderDefinitionTransform<R, A, Raw> {
+    /**
+     * Transforms raw `baseQuery` response into final hook result.
+     *
+     * Use this when transport response shape differs from the desired `data` shape.
+     * The returned value becomes cached query data and is exposed by the hook.
+     */
+    transformResponse: (response: Raw, arg: A) => R;
+}
 
 /**
- * Mutation endpoint definition.
+ * Query endpoint definition.
  *
- * @template R Final result type returned by mutation trigger and exposed in mutation state
+ * @template R Final result type that will be exposed in hook `data`
  * after `transformResponse` is applied.
- * @template A Mutation argument type passed into trigger and `query`.
+ * @template A Query argument type passed into the generated hook and `query`.
  * @template Raw Raw response type returned by `baseQuery` before transformation.
  */
-export interface MutationBuilderDefinition<R, A, Raw = R> {
+export type QueryBuilderDefinition<R, A, Raw = R> = (
+    QueryBuilderDefinitionBase<R, A>
+    & { type: 'query' }
+    & Partial<QueryBuilderDefinitionTransform<R, A, Raw>>
+);
+
+export type QueryDefinitionInput<R, A, Raw = R> = QueryBuilderDefinitionBase<R, A> & (
+    [Raw] extends [R]
+        ? Partial<QueryBuilderDefinitionTransform<R, A, Raw>>
+        : QueryBuilderDefinitionTransform<R, A, Raw>
+    );
+
+export type MutationTagsResolver<R, A> = (result: R, arg: A) => string[];
+
+export interface MutationBuilderDefinitionBase<R, A> {
     /**
      * Internal endpoint kind discriminator.
      */
@@ -155,18 +175,40 @@ export interface MutationBuilderDefinition<R, A, Raw = R> {
     invalidatesTags?: MutationTagsResolver<R, A>;
 
     /**
-     * Transforms raw `baseQuery` response into final mutation result.
-     *
-     * The returned value becomes the resolved trigger result and mutation `data`.
-     */
-    transformResponse?: (response: Raw, arg: A) => R;
-
-    /**
      * Transforms mutation error before it is written into mutation state
      * and rethrown from trigger.
      */
     transformErrorResponse?: (error: unknown, arg: A) => unknown;
 }
+
+interface MutationBuilderDefinitionTransform<R, A, Raw> {
+    /**
+     * Transforms raw `baseQuery` response into final mutation result.
+     *
+     * The returned value becomes the resolved trigger result and mutation `data`.
+     */
+    transformResponse: (response: Raw, arg: A) => R;
+}
+
+/**
+ * Mutation endpoint definition.
+ *
+ * @template R Final result type returned by mutation trigger and exposed in mutation state
+ * after `transformResponse` is applied.
+ * @template A Mutation argument type passed into trigger and `query`.
+ * @template Raw Raw response type returned by `baseQuery` before transformation.
+ */
+export type MutationBuilderDefinition<R, A, Raw = R> = (
+    MutationBuilderDefinitionBase<R, A>
+    & { type: 'mutation' }
+    & Partial<MutationBuilderDefinitionTransform<R, A, Raw>>
+);
+
+export type MutationDefinitionInput<R, A, Raw = R> = MutationBuilderDefinitionBase<R, A> & (
+    [Raw] extends [R]
+        ? Partial<MutationBuilderDefinitionTransform<R, A, Raw>>
+        : MutationBuilderDefinitionTransform<R, A, Raw>
+    );
 
 export type GeneralDefinition<R = any, A = any, Raw = R> = (
     MutationBuilderDefinition<R, A, Raw> | QueryBuilderDefinition<R, A, Raw>
@@ -232,3 +274,53 @@ export type MutationHook<R, A> = () => readonly [
     (arg: A) => Promise<R>,
     InferMutationState<R> & MutationManagers,
 ];
+
+export interface FetchBaseQueryMeta {
+    request: Request;
+    response: Response;
+}
+
+export type FetchBaseQueryError
+    = | {
+        status: number;
+        data: unknown;
+    }
+    | {
+        status: 'FETCH_ERROR';
+        error: string;
+    }
+    | {
+        status: 'PARSING_ERROR';
+        originalStatus: number;
+        data: string;
+        error: string;
+    }
+    | {
+        status: 'TIMEOUT_ERROR';
+        error: string;
+    }
+    | {
+        status: 'CUSTOM_ERROR';
+        error: string;
+        data?: unknown;
+    };
+
+export interface FetchBaseQueryArgs extends BaseQueryArgs {
+    headers?: HeadersInit;
+    responseHandler?: 'json' | 'text' | 'content-type' | ((response: Response) => Promise<unknown>);
+    validateStatus?: (response: Response, body: unknown) => boolean;
+    timeout?: number;
+}
+
+export interface FetchBaseQueryOptions {
+    baseUrl?: string;
+    prepareHeaders?: (
+        headers: Headers,
+        context: { arg: FetchBaseQueryArgs },
+    ) => Headers | void;
+    paramsSerializer?: (params: Record<string, unknown>) => string;
+    fetchFn?: typeof fetch;
+    timeout?: number;
+    responseHandler?: 'json' | 'text' | 'content-type' | ((response: Response) => Promise<unknown>);
+    validateStatus?: (response: Response, body: unknown) => boolean;
+}

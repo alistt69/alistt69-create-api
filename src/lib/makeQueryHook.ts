@@ -17,10 +17,10 @@ import {
 } from '../model/queryStore.js';
 import { BaseQueryFn, QueryBuilderDefinition, QueryHookOptions } from '../model/types.js';
 
-interface MakeQueryHookProps<R, A, Raw = R> extends Omit<QueryBuilderDefinition<R, A, Raw>, 'type'>{
-    endpointName: string,
-    baseQuery: BaseQueryFn<Raw>,
-}
+type MakeQueryHookProps<R, A, Raw = R> = {
+    endpointName: string;
+    baseQuery: BaseQueryFn<Raw>;
+} & Omit<QueryBuilderDefinition<R, A, Raw>, 'type'>;
 
 export function makeQueryHook<R, A, Raw = R>({
     query,
@@ -61,6 +61,7 @@ export function makeQueryHook<R, A, Raw = R>({
 
             let promise!: Promise<R>;
 
+            // eslint-disable-next-line prefer-const
             promise = (async () => {
                 updateQueryState(key, (prevState) => ({
                     ...prevState,
@@ -72,12 +73,21 @@ export function makeQueryHook<R, A, Raw = R>({
 
                 try {
                     const request = query(argRef.current);
-                    const raw = await baseQuery({
+                    const result = await baseQuery({
                         ...request,
                         signal: controller.signal,
                     });
 
-                    const data = transformResponse ? transformResponse(raw, argRef.current) : (raw as R);
+                    if ('error' in result) {
+                        const transformedError = transformErrorResponse
+                            ? transformErrorResponse(result.error, argRef.current)
+                            : result.error;
+
+                        throw transformedError;
+                    }
+
+                    const raw = result.data;
+                    const data = transformResponse ? transformResponse(raw, argRef.current) : raw as unknown as R;
 
                     if (!controller.signal.aborted) {
                         updateQueryState(key, (prevState) => ({
@@ -99,17 +109,13 @@ export function makeQueryHook<R, A, Raw = R>({
                         throw error;
                     }
 
-                    const transformedError = transformErrorResponse
-                        ? transformErrorResponse(error, argRef.current)
-                        : error;
-
                     updateQueryState(key, (prevState) => ({
                         ...prevState,
                         data: undefined,
-                        error: transformedError,
+                        error,
                     }));
 
-                    throw transformedError;
+                    throw error;
                 }
                 finally {
                     if (!controller.signal.aborted) {
@@ -129,12 +135,12 @@ export function makeQueryHook<R, A, Raw = R>({
 
             return promise;
         }, [
-            baseQuery,
             key,
-            providesTags,
             query,
-            transformErrorResponse,
+            baseQuery,
+            providesTags,
             transformResponse,
+            transformErrorResponse,
         ]);
 
         const refetch = useCallback(() => {
@@ -159,7 +165,7 @@ export function makeQueryHook<R, A, Raw = R>({
             const currentState = initQueryState(key);
 
             if (currentState.data === undefined || currentState.fulfilledAt === undefined) {
-                void run();
+                void run().catch(() => undefined);
                 return;
             }
 
@@ -170,7 +176,7 @@ export function makeQueryHook<R, A, Raw = R>({
             const isFresh = Date.now() - currentState.fulfilledAt < staleTime;
 
             if (!isFresh) {
-                void run();
+                void run().catch(() => undefined);
             }
         }, [enabled, key, run, staleTime, refetchOnMount]);
 

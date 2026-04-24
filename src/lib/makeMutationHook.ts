@@ -6,9 +6,9 @@ import {
 } from '../model/queryStore.js';
 import { BaseQueryFn, InferMutationState, MutationBuilderDefinition } from '../model/types.js';
 
-interface MakeMutationHookProps<R, A, Raw = R> extends Omit<MutationBuilderDefinition<R, A, Raw>, 'type'> {
-    baseQuery: BaseQueryFn<Raw>,
-}
+type MakeMutationHookProps<R, A, Raw = R> = {
+    baseQuery: BaseQueryFn<Raw>;
+} & Omit<MutationBuilderDefinition<R, A, Raw>, 'type'>;
 
 export function makeMutationHook<R, A, Raw = R>({
     query,
@@ -29,10 +29,7 @@ export function makeMutationHook<R, A, Raw = R>({
         const requestIdRef = useRef(0);
 
         const reset = useCallback(() => {
-            setState((prevState) => ({
-                ...prevState,
-                ...initialState,
-            }));
+            setState(initialState);
         }, [initialState]);
 
         const trigger = useCallback(async (arg: A) => {
@@ -48,8 +45,18 @@ export function makeMutationHook<R, A, Raw = R>({
 
             try {
                 const request = query(arg);
-                const raw = await baseQuery(request);
-                const data = transformResponse ? transformResponse(raw, arg) : (raw as R);
+                const result = await baseQuery(request);
+
+                if ('error' in result) {
+                    const transformedError = transformErrorResponse
+                        ? transformErrorResponse(result.error, arg)
+                        : result.error;
+
+                    throw transformedError;
+                }
+
+                const raw = result.data;
+                const data = transformResponse ? transformResponse(raw, arg) : raw as unknown as R;
 
                 if (requestIdRef.current === requestId) {
                     setState({
@@ -75,19 +82,15 @@ export function makeMutationHook<R, A, Raw = R>({
                 return data;
             }
             catch (error) {
-                const transformedError = transformErrorResponse
-                    ? transformErrorResponse(error, arg)
-                    : error;
-
                 if (requestIdRef.current === requestId) {
                     setState({
                         data: undefined,
                         isLoading: false,
-                        error: transformedError,
+                        error,
                     });
                 }
 
-                throw transformedError;
+                throw error;
             }
             finally {
                 if (requestIdRef.current === requestId) {

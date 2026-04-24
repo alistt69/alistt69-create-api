@@ -7,12 +7,12 @@ import {
     setQueryTagResolver,
     setQueryKeySerializer,
 } from '../model/queryStore.js';
+import { BaseQueryFn, CreateApiResult, CreateApiUtil, GeneralDefinition } from '../model/types.js';
 import { getHookName } from './getHookName.js';
+import { makeLazyQueryHook } from './makeLazyQueryHook.js';
+import { makeMutationHook } from './makeMutationHook.js';
 import { makeQueryHook } from './makeQueryHook.js';
 import { typedObjectKeys } from './typedObjectKeys.js';
-import { makeMutationHook } from './makeMutationHook.js';
-import { makeLazyQueryHook } from './makeLazyQueryHook.js';
-import { BaseQueryFn, CreateApiResult, CreateApiUtil, GeneralDefinition } from '../model/types.js';
 
 export interface BaseQueryArgs {
     url: string;
@@ -29,7 +29,7 @@ interface CreateApiConfig<T extends Record<string, GeneralDefinition>> {
 
 export function createApi<T extends Record<string, GeneralDefinition>>({
     endpoints,
-    baseQuery
+    baseQuery,
 }: CreateApiConfig<T>): CreateApiResult<T> {
     const transformedEndpoints = endpoints({ query, mutation });
 
