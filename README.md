@@ -32,6 +32,7 @@ It provides query, lazy query and mutation hooks, cache helpers and stale data s
 | Query hooks          | Fetch data with generated hooks      |
 | Lazy query hooks     | Trigger queries manually when needed |
 | Mutation hooks       | Handle writes with generated hooks   |
+| fetchBaseQuery       | Ready-to-use HTTP baseQuery built on fetch |
 | Cache utils          | Read and patch cached data manually  |
 | Stale time support   | Reuse cached data before refetching  |
 | Keep unused data for | Control cache lifetime after unmount |
@@ -47,6 +48,7 @@ Do whatever you want and however you want with:
 * predictable cache behavior
 * simple manual cache updates
 * a focused API without a larger state layer
+* a built-in `fetchBaseQuery` for managing your HTTP requests
 
 ## 📦 Requirements
 * Node.js 18 or higher
@@ -59,32 +61,23 @@ npm i @alistt69/create-api
 
 ## ⚡ Quick example
 ```typescript jsx
-import { createApi } from '@alistt69/create-api';
+import { createApi, fetchBaseQuery } from '@alistt69/create-api';
 
 const api = createApi({
-    baseQuery: async ({ url, method = 'GET', body, signal }) => {
-        const res = await fetch(url, {
-            method,
-            signal,
-            headers: { 'Content-Type': 'application/json' },
-            body: body ? JSON.stringify(body) : undefined,
-        });
-
-        if (!res.ok) {
-            throw await res.json();
-        }
-
-        return res.json();
-    },
+    baseQuery: fetchBaseQuery({
+        baseUrl: 'https://example.com/api',
+    }),
 
     endpoints: (builder) => ({
         getPost: builder.query({
-            query: (id) => ({ url: `/api/posts/${id}` }),
+            query: (id) => ({
+                url: `/posts/${id}`,
+            }),
         }),
 
         updatePost: builder.mutation({
             query: ({ id, title }) => ({
-                url: `/api/posts/${id}`,
+                url: `/posts/${id}`,
                 method: 'PATCH',
                 body: { title },
             }),
@@ -109,10 +102,62 @@ function Post() {
 }
 ```
 
+## 🌐 fetchBaseQuery
+
+`fetchBaseQuery` is a small ready-to-use `baseQuery` built on top of the native `fetch` API.
+
+It supports:
+- `baseUrl`
+- `params`
+- `headers`
+- `prepareHeaders`
+- `timeout`
+- `responseHandler`
+- `validateStatus`
+- `fetchFn`
+
+### Example
+
+```tsx
+import { createApi, fetchBaseQuery } from '@alistt69/create-api';
+
+const api = createApi({
+    baseQuery: fetchBaseQuery({
+        baseUrl: 'https://example.com/api',
+        prepareHeaders: (headers) => {
+            headers.set('authorization', 'Bearer token');
+            return headers;
+        },
+    }),
+    endpoints: (builder) => ({
+        getTickets: builder.query({
+            query: ({ page }) => ({
+                url: '/tickets',
+                params: { page },
+            }),
+        }),
+    }),
+});
+```
+
+### Blob / custom response handling
+```javascript
+downloadFile: builder.query({
+    query: () => ({
+        url: '/report',
+        responseHandler: (response) => response.blob(),
+    }),
+}),
+```
+
 ## ⚙️ Cache utils
 ``` typescript
 api.util.getQueryData('getPost', '1');
 api.util.setQueryData('getPost', '1', { id: '1', title: 'Local title' });
+api.util.updateQueryData('getPost', '1', (prev) => ({
+    ...prev,
+    title: 'Patched title',
+}));
 ```
 
 ## 📄 License
